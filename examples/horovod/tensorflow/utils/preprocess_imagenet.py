@@ -163,17 +163,28 @@ def _convert_to_example(filename, image_buffer, label, synset, height, width):
   channels = 3
   image_format = 'JPEG'
 
-  example = tf.train.Example(features=tf.train.Features(feature={
-      'image/height': _int64_feature(height),
-      'image/width': _int64_feature(width),
-      'image/colorspace': _bytes_feature(tf.compat.as_bytes(colorspace)),
-      'image/channels': _int64_feature(channels),
-      'image/class/label': _int64_feature(label),
-      'image/class/synset': _bytes_feature(tf.compat.as_bytes(synset)),
-      'image/format': _bytes_feature(tf.compat.as_bytes(image_format)),
-      'image/filename': _bytes_feature(tf.compat.as_bytes(os.path.basename(filename))),
-      'image/encoded': _bytes_feature(tf.compat.as_bytes(image_buffer))}))
-  return example
+  return tf.train.Example(
+      features=tf.train.Features(
+          feature={
+              'image/height':
+              _int64_feature(height),
+              'image/width':
+              _int64_feature(width),
+              'image/colorspace':
+              _bytes_feature(tf.compat.as_bytes(colorspace)),
+              'image/channels':
+              _int64_feature(channels),
+              'image/class/label':
+              _int64_feature(label),
+              'image/class/synset':
+              _bytes_feature(tf.compat.as_bytes(synset)),
+              'image/format':
+              _bytes_feature(tf.compat.as_bytes(image_format)),
+              'image/filename':
+              _bytes_feature(tf.compat.as_bytes(os.path.basename(filename))),
+              'image/encoded':
+              _bytes_feature(tf.compat.as_bytes(image_buffer)),
+          }))
 
 
 def _is_png(filename):
@@ -201,17 +212,30 @@ def _is_cmyk(filename):
   """
   # File list from:
   # https://github.com/cytsai/ilsvrc-cmyk-image-list
-  blacklist = set(['n01739381_1309.JPEG', 'n02077923_14822.JPEG',
-                   'n02447366_23489.JPEG', 'n02492035_15739.JPEG',
-                   'n02747177_10752.JPEG', 'n03018349_4028.JPEG',
-                   'n03062245_4620.JPEG', 'n03347037_9675.JPEG',
-                   'n03467068_12171.JPEG', 'n03529860_11437.JPEG',
-                   'n03544143_17228.JPEG', 'n03633091_5218.JPEG',
-                   'n03710637_5125.JPEG', 'n03961711_5286.JPEG',
-                   'n04033995_2932.JPEG', 'n04258138_17003.JPEG',
-                   'n04264628_27969.JPEG', 'n04336792_7448.JPEG',
-                   'n04371774_5854.JPEG', 'n04596742_4225.JPEG',
-                   'n07583066_647.JPEG', 'n13037406_4650.JPEG'])
+  blacklist = {
+      'n01739381_1309.JPEG',
+      'n02077923_14822.JPEG',
+      'n02447366_23489.JPEG',
+      'n02492035_15739.JPEG',
+      'n02747177_10752.JPEG',
+      'n03018349_4028.JPEG',
+      'n03062245_4620.JPEG',
+      'n03347037_9675.JPEG',
+      'n03467068_12171.JPEG',
+      'n03529860_11437.JPEG',
+      'n03544143_17228.JPEG',
+      'n03633091_5218.JPEG',
+      'n03710637_5125.JPEG',
+      'n03961711_5286.JPEG',
+      'n04033995_2932.JPEG',
+      'n04258138_17003.JPEG',
+      'n04264628_27969.JPEG',
+      'n04336792_7448.JPEG',
+      'n04371774_5854.JPEG',
+      'n04596742_4225.JPEG',
+      'n07583066_647.JPEG',
+      'n13037406_4650.JPEG',
+  }
   return os.path.basename(filename) in blacklist
 
 
@@ -287,11 +311,11 @@ def _process_image(filename, coder):
   # Clean the dirty data.
   if _is_png(filename):
     # 1 image is a PNG.
-    tf.logging.info('Converting PNG to JPEG for %s' % filename)
+    tf.logging.info(f'Converting PNG to JPEG for {filename}')
     image_data = coder.png_to_jpeg(image_data)
   elif _is_cmyk(filename):
     # 22 JPEG images are in CMYK colorspace.
-    tf.logging.info('Converting CMYK to RGB for %s' % filename)
+    tf.logging.info(f'Converting CMYK to RGB for {filename}')
     image_data = coder.cmyk_to_rgb(image_data)
 
   # Decode the RGB JPEG.
@@ -375,7 +399,7 @@ def _process_dataset(filenames, synsets, labels, output_directory, prefix,
         output_directory, '%s-%.5d-of-%.5d' % (prefix, shard, num_shards))
     _process_image_files_batch(coder, output_file, chunk_files,
                                chunk_synsets, labels)
-    tf.logging.info('Finished writing file: %s' % output_file)
+    tf.logging.info(f'Finished writing file: {output_file}')
     files.append(output_file)
   return files
 
@@ -432,7 +456,7 @@ def convert_to_tf_records(raw_data_dir):
   return training_records, validation_records
 
 
-def main(argv):  # pylint: disable=unused-argument
+def main(argv):# pylint: disable=unused-argument
   tf.logging.set_verbosity(tf.logging.INFO)
 
   if FLAGS.local_scratch_dir is None:
@@ -442,7 +466,7 @@ def main(argv):  # pylint: disable=unused-argument
   raw_data_dir = FLAGS.raw_data_dir
   if raw_data_dir is None:
     raw_data_dir = os.path.join(FLAGS.local_scratch_dir, 'raw_data')
-    tf.logging.info('Downloading data to raw_data_dir: %s' % raw_data_dir)
+    tf.logging.info(f'Downloading data to raw_data_dir: {raw_data_dir}')
     download_dataset(raw_data_dir)
 
   # Convert the raw data into tf-records

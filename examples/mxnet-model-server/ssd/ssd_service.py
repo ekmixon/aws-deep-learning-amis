@@ -107,7 +107,4 @@ def handle(data, context):
     if not _service.initialized:
         _service.initialize(context)
 
-    if data is None:
-        return None
-
-    return _service.handle(data, context)
+    return None if data is None else _service.handle(data, context)

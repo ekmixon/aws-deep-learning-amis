@@ -38,12 +38,11 @@ class Dataset(object):
             data_dir = FLAGS.data_dir
         self.data_dir = data_dir
     def data_files(self, subset):
-        tf_record_pattern = os.path.join(self.data_dir, '%s-*' % subset)
-        data_files = tf.gfile.Glob(tf_record_pattern)
-        if not data_files:
-            raise RuntimeError('No files found for %s dataset at %s' %
-                               (subset, self.data_dir))
-        return data_files
+        tf_record_pattern = os.path.join(self.data_dir, f'{subset}-*')
+        if data_files := tf.gfile.Glob(tf_record_pattern):
+            return data_files
+        else:
+            raise RuntimeError(f'No files found for {subset} dataset at {self.data_dir}')
     def reader(self):
         return tf.TFRecordReader()
     def num_classes(self):
@@ -89,12 +88,16 @@ def resize_example(example):
     }
     sparse_float32 = tf.VarLenFeature(dtype=tf.float32)
     # Sparse features in Example proto.
-    feature_map.update(
-        #{k: sparse_float32 for k in ['image/object/bbox/xmin',
-        {k: tf.VarLenFeature(dtype=tf.float32) for k in ['image/object/bbox/xmin',
-                                     'image/object/bbox/ymin',
-                                     'image/object/bbox/xmax',
-                                     'image/object/bbox/ymax']})
+    feature_map |= {
+        k: tf.VarLenFeature(dtype=tf.float32)
+        for k in [
+            'image/object/bbox/xmin',
+            'image/object/bbox/ymin',
+            'image/object/bbox/xmax',
+            'image/object/bbox/ymax',
+        ]
+    }
+
     example = tf.parse_single_example(example, feature_map)
     encoded_image = example['image/encoded']
 
@@ -222,9 +225,10 @@ if __name__ == "__main__":
     num_examples = dataset.num_examples_per_epoch(FLAGS.subset_name)
     examples_per_shard = (num_examples-1) // num_shards + 1
 
-    print(" num_preprocess_threads : {}\n examples_per_shard is {}\n "
-          "num_intra_threads is {}\n num_inter_threads is {}".format(FLAGS.num_preprocess_threads, examples_per_shard,
-                                                                     FLAGS.num_inter_threads, FLAGS.num_intra_threads))
+    print(
+        f" num_preprocess_threads : {FLAGS.num_preprocess_threads}\n examples_per_shard is {examples_per_shard}\n num_intra_threads is {FLAGS.num_inter_threads}\n num_inter_threads is {FLAGS.num_intra_threads}"
+    )
+
 
     config = tf.ConfigProto(
         inter_op_parallelism_threads = FLAGS.num_inter_threads,
@@ -288,16 +292,17 @@ if __name__ == "__main__":
         if not os.path.exists(FLAGS.output_dir):
             os.mkdir(FLAGS.output_dir)
         if os.path.exists(output_file) and not FLAGS.force:
-            raise IOError("Output file already exists (pass -f to overwrite): " + output_file)
-        with tf.python_io.TFRecordWriter(output_file) as writer:
-            for i in range(examples_per_shard):
+            raise IOError(
+                f"Output file already exists (pass -f to overwrite): {output_file}"
+            )
 
+        with tf.python_io.TFRecordWriter(output_file) as writer:
+            for _ in range(examples_per_shard):
         #print sess.run([t.op for t in resized_batch])
                 encoded_images, heights, widths, channels, colorspaces, \
                 labels, texts, synsets, img_format, img_filename, \
                     xmin, ymin, xmax, ymax = \
                     sess.run(resized_batch)
-
         #output_filename = '%s-%05d-of-%05d' % (FLAGS.subset_name, batch_num, num_shards)
         #output_file = os.path.join(FLAGS.output_dir, output_filename)
         #with tf.python_io.TFRecordWriter(output_file) as writer:

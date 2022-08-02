@@ -150,8 +150,7 @@ class LayerBuilder(object):
         return activation(inputs) if activation is not None else inputs
 
     def batch_norm(self, inputs, **kwargs):
-        all_kwargs = dict(self.batch_norm_config)
-        all_kwargs.update(kwargs)
+        all_kwargs = dict(self.batch_norm_config) | kwargs
         data_format = 'NHWC' if self.data_format == 'channels_last' else 'NCHW'
         return tf.contrib.layers.batch_norm(
             inputs, is_training=self.training, data_format=data_format,
@@ -203,10 +202,7 @@ def resnet_bottleneck_v1(builder, inputs, depth, depth_bottleneck, stride,
     x = inputs
     with tf.name_scope('resnet_v1'):
         if depth == num_inputs:
-            if stride == 1:
-                shortcut = x
-            else:
-                shortcut = builder.max_pooling2d(x, 1, stride)
+            shortcut = x if stride == 1 else builder.max_pooling2d(x, 1, stride)
         else:
             shortcut = builder.conv2d_linear(x, depth, 1, stride, 'SAME')
         if basic:
@@ -227,7 +223,7 @@ def inference_resnet_v1_impl(builder, inputs, layer_counts, basic=False):
     x = builder.pad2d(x, 3)
     x = builder.conv2d(x, 64, 7, 2, 'VALID')
     x = builder.max_pooling2d(x, 3, 2, 'SAME')
-    for i in range(layer_counts[0]):
+    for _ in range(layer_counts[0]):
         x = resnet_bottleneck_v1(builder, x, 256, 64, 1, basic)
     for i in range(layer_counts[1]):
         x = resnet_bottleneck_v1(builder, x, 512, 128, 2 if i == 0 else 1, basic)
@@ -261,12 +257,11 @@ def inference_resnet_v1(inputs, nlayer, data_format='channels_last',
 
 
 def get_model_func(model_name):
-    if model_name.startswith('resnet'):
-        nlayer = int(model_name[len('resnet'):])
-        return lambda images, *args, **kwargs: \
-            inference_resnet_v1(images, nlayer, *args, **kwargs)
-    else:
-        raise ValueError("Invalid model type: %s" % model_name)
+    if not model_name.startswith('resnet'):
+        raise ValueError(f"Invalid model type: {model_name}")
+    nlayer = int(model_name[len('resnet'):])
+    return lambda images, *args, **kwargs: \
+        inference_resnet_v1(images, nlayer, *args, **kwargs)
 
 
 def deserialize_image_record(record):
@@ -283,8 +278,13 @@ def deserialize_image_record(record):
         obj = tf.parse_single_example(record, feature_map)
         imgdata = obj['image/encoded']
         label = tf.cast(obj['image/class/label'], tf.int32)
-        bbox = tf.stack([obj['image/object/bbox/%s' % x].values
-                         for x in ['ymin', 'xmin', 'ymax', 'xmax']])
+        bbox = tf.stack(
+            [
+                obj[f'image/object/bbox/{x}'].values
+                for x in ['ymin', 'xmin', 'ymax', 'xmax']
+            ]
+        )
+
         bbox = tf.transpose(tf.expand_dims(bbox, 0), [0, 2, 1])
         text = obj['image/class/text']
         return imgdata, label, bbox, text
@@ -363,7 +363,6 @@ def make_dataset(filenames, take_count, batch_size, height, width,
         element = (input_element, label_element)
         ds = tf.data.Dataset.from_tensors(element).repeat()
     else:
-        shuffle_buffer_size = 10000
         num_readers = 1
         if hvd.size() > len(filenames):
             assert (hvd.size() % len(filenames)) == 0
@@ -389,6 +388,7 @@ def make_dataset(filenames, take_count, batch_size, height, width,
             distort=training, nsummary=nsummary if training else 0, increased_aug=increased_aug)
         ds = ds.map(preproc_func, num_parallel_calls=num_threads)
         if training:
+            shuffle_buffer_size = 10000
             ds = ds.apply(tf.data.experimental.shuffle_and_repeat(shuffle_buffer_size, seed=5*(1+hvd.rank())))
     ds = ds.batch(batch_size)
     return ds
@@ -454,10 +454,9 @@ def _fp32_trainvar_getter(getter, name, shape=None, dtype=None,
                       regularizer=regularizer if trainable and 'BatchNorm' not in name and 'batchnorm' not in name and 'batch_norm' not in name and 'Batch_Norm' not in name else None,
                       *args, **kwargs)
     if trainable and dtype != tf.float32:
-        cast_name = name + '/fp16_cast'
+        cast_name = f'{name}/fp16_cast'
         try:
-            cast_variable = tf.get_default_graph().get_tensor_by_name(
-                cast_name + ':0')
+            cast_variable = tf.get_default_graph().get_tensor_by_name(f'{cast_name}:0')
         except KeyError:
             cast_variable = tf.cast(variable, dtype, name=cast_name)
         cast_variable._ref = variable._ref
@@ -576,7 +575,7 @@ def get_lr(lr, steps, lr_steps, warmup_it, decay_steps, global_step, lr_decay_mo
     if lr_decay_mode == 'steps':
         learning_rate = tf.train.piecewise_constant(global_step,
                                                     steps, lr_steps)
-    elif lr_decay_mode == 'poly' or lr_decay_mode == 'poly_cycle':
+    elif lr_decay_mode in ['poly', 'poly_cycle']:
         cycle = lr_decay_mode == 'poly_cycle'
         learning_rate = tf.train.polynomial_decay(lr,
                                                   global_step - warmup_it,
@@ -612,8 +611,7 @@ def warmup_decay(warmup_lr, global_step, warmup_steps, warmup_end_lr):
     from tensorflow.python.ops import math_ops
     p = tf.cast(global_step, tf.float32) / tf.cast(warmup_steps, tf.float32)
     diff = math_ops.subtract(warmup_end_lr, warmup_lr)
-    res = math_ops.add(warmup_lr, math_ops.multiply(diff, p))
-    return res
+    return math_ops.add(warmup_lr, math_ops.multiply(diff, p))
 
 
 def cnn_model_function(features, labels, mode, params):
@@ -753,10 +751,25 @@ def add_bool_argument(cmdline, shortname, longname=None, default=False, help=Non
     name = longname[2:]
     feature_parser = cmdline.add_mutually_exclusive_group(required=False)
     if shortname is not None:
-        feature_parser.add_argument(shortname, '--' + name, dest=name, action='store_true', help=help, default=default)
+        feature_parser.add_argument(
+            shortname,
+            f'--{name}',
+            dest=name,
+            action='store_true',
+            help=help,
+            default=default,
+        )
+
     else:
-        feature_parser.add_argument('--' + name, dest=name, action='store_true', help=help, default=default)
-    feature_parser.add_argument('--no' + name, dest=name, action='store_false')
+        feature_parser.add_argument(
+            f'--{name}',
+            dest=name,
+            action='store_true',
+            help=help,
+            default=default,
+        )
+
+    feature_parser.add_argument(f'--no{name}', dest=name, action='store_false')
     return cmdline
 
 
@@ -876,10 +889,14 @@ def sort_and_load_ckpts(log_dir):
         if m is None:
             continue
         fullpath = os.path.join(log_dir, f)
-        ckpts.append({'step': int(m.group(1)),
-                      'path': os.path.splitext(fullpath)[0],
-                      'mtime': os.stat(fullpath).st_mtime,
-                      })
+        ckpts.append(
+            {
+                'step': int(m[1]),
+                'path': os.path.splitext(fullpath)[0],
+                'mtime': os.stat(fullpath).st_mtime,
+            }
+        )
+
     ckpts.sort(key=itemgetter('step'))
     return ckpts
 
